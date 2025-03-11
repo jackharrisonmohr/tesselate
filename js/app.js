@@ -8,6 +8,9 @@ let gl;
 let program;
 let canvas;
 
+// App state
+let showColors = true; // Toggle for showing/hiding colors
+
 // Shader attributes and uniforms
 let positionAttributeLocation;
 let instanceOffsetLocation;
@@ -16,6 +19,7 @@ let instanceScaleLocation;
 let selectedUniformLocation;
 let timeUniformLocation;
 let resolutionUniformLocation;
+let showColorsUniformLocation;
 let projectionMatrixLocation;
 let modelViewMatrixLocation;
 
@@ -122,6 +126,7 @@ const fragmentShaderSource = `
     
     uniform float time;
     uniform vec2 resolution;
+    uniform float showColors; // Add uniform for color toggle
     
     varying vec3 vColor;
     varying float vSelected;
@@ -139,8 +144,24 @@ const fragmentShaderSource = `
         float borderWidth = 0.01;
         float borderFactor = smoothstep(0.0, borderWidth, edgeDist);
         
-        // Apple-inspired aesthetic - clean fill with subtle border
-        vec3 color = mix(vec3(0.85), baseColor, borderFactor);
+        // Default colors for transparent mode
+        vec3 edgeColor = vec3(0.2, 0.2, 0.2);  // Dark gray edges
+        float alpha = 0.1;                      // Very transparent fill
+        
+        // Apply colors based on the showColors toggle
+        vec3 color;
+        if (showColors > 0.5) {
+            // Apple-inspired aesthetic - clean fill with subtle border when colors enabled
+            color = mix(vec3(0.85), baseColor, borderFactor);
+            alpha = 0.95;
+        } else {
+            // Transparent mode - just show edges
+            color = mix(edgeColor, vec3(0.98), borderFactor);
+            // Keep selection colors visible even in transparent mode
+            if (vSelected <= 0.5) {
+                alpha = mix(0.8, 0.05, borderFactor); // Edges visible, fill almost transparent
+            }
+        }
         
         // For selected triangles, add a clean, elegant highlight
         if (vSelected > 0.5) {
@@ -156,9 +177,12 @@ const fragmentShaderSource = `
             
             // Add a subtle overall tint
             color = color * 0.8 + highlightColor * 0.2;
+            
+            // Keep selected triangles more visible even in transparent mode
+            alpha = 0.8;
         }
         
-        gl_FragColor = vec4(color, 0.95);
+        gl_FragColor = vec4(color, alpha);
     }
 `;
 
@@ -291,6 +315,7 @@ function initWebGL() {
     
     timeUniformLocation = gl.getUniformLocation(program, 'time');
     resolutionUniformLocation = gl.getUniformLocation(program, 'resolution');
+    showColorsUniformLocation = gl.getUniformLocation(program, 'showColors');
     modelViewMatrixLocation = gl.getUniformLocation(program, 'modelViewMatrix');
     projectionMatrixLocation = gl.getUniformLocation(program, 'projectionMatrix');
     
@@ -753,6 +778,13 @@ function setupInputHandlers() {
             return;
         }
         
+        // Toggle colors with 'c' key
+        if (event.key === 'c' && !event.metaKey) { // Ensure we don't conflict with cmd+c
+            showColors = !showColors;
+            console.log(`%c Colors toggled ${showColors ? 'ON' : 'OFF'}`, 'color: blue; font-weight: bold');
+            return;
+        }
+        
         // Handle arrow keys for navigation
         if (event.key.startsWith('Arrow')) {
             event.preventDefault();
@@ -992,6 +1024,7 @@ function render(time) {
     // Update uniforms
     gl.uniform1f(timeUniformLocation, timeSeconds);
     gl.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
+    gl.uniform1f(showColorsUniformLocation, showColors ? 1.0 : 0.0);
     
     // Set up camera/projection matrices with a nicely zoomed view
     const aspect = canvas.width / canvas.height;
