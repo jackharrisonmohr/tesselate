@@ -542,23 +542,95 @@ function createInnerTriangle(triangleIndex, side) {
     const triangle = triangles[triangleIndex];
     if (!triangle) return null;
     
-    // Get two vertices of the side
+    console.log('%c Creating inner triangle on side ' + side, 'color: green; font-weight: bold');
+    console.log('Triangle vertices:', triangle.vertices);
+    
+    // Let's make a true equilateral triangle using fixed proportions of parent
+    // Get the side vertices
     const sideVertices = triangle.getSide(side);
     
-    // Get center point of the triangle
-    const center = triangle.center;
+    // Extract coordinates for readability
+    const x1 = sideVertices[0];
+    const y1 = sideVertices[1];
+    const x2 = sideVertices[2];
+    const y2 = sideVertices[3];
     
-    // Create vertices for inner triangle (side to center)
+    // Step 1: Create equilateral triangle using the makeEquilateralTriangle function
+    // We know this function works correctly for adjacent triangles
+    const equilateralBase = [x1, y1, x2, y2];
+    
+    // Get complete set of vertices for an equilateral triangle
+    // Try both with and without the flip parameter to determine which one is actually inside
+    const equilateralVertsFlipped = makeEquilateralTriangle(equilateralBase, true);
+    const equilateralVertsUnflipped = makeEquilateralTriangle(equilateralBase, false);
+    
+    // Determine which one is actually pointing inward by checking which third vertex
+    // is closer to the triangle's center
+    const distFlipped = Math.sqrt(
+        (equilateralVertsFlipped[4] - triangle.center[0]) ** 2 + 
+        (equilateralVertsFlipped[5] - triangle.center[1]) ** 2
+    );
+    
+    const distUnflipped = Math.sqrt(
+        (equilateralVertsUnflipped[4] - triangle.center[0]) ** 2 + 
+        (equilateralVertsUnflipped[5] - triangle.center[1]) ** 2
+    );
+    
+    // Use the one with the SMALLER distance to center (that's the inner one)
+    const equilateralVerts = (distFlipped < distUnflipped) ? 
+        equilateralVertsFlipped : equilateralVertsUnflipped;
+        
+    console.log(`Dist flipped: ${distFlipped.toFixed(2)}, Dist unflipped: ${distUnflipped.toFixed(2)}, Using: ${distFlipped < distUnflipped ? 'FLIPPED' : 'UNFLIPPED'}`);
+    
+    // Extract new third vertex from the equilateral triangle
+    const x3 = equilateralVerts[4];
+    const y3 = equilateralVerts[5];
+    
+    // Calculate midpoint of the side
+    const midpointX = (x1 + x2) / 2;
+    const midpointY = (y1 + y2) / 2;
+    
+    // Calculate vector from midpoint to the third vertex
+    const vectorX = x3 - midpointX;
+    const vectorY = y3 - midpointY;
+    
+    // Create a scaled version (1/4 size) for "triforce" effect
+    const scaleAmount = 1/4;
+    const scaledX3 = midpointX + vectorX * scaleAmount;
+    const scaledY3 = midpointY + vectorY * scaleAmount;
+    
+    // Create the final inner triangle vertices 
     const newVertices = [
-        sideVertices[0], sideVertices[1],
-        sideVertices[2], sideVertices[3],
-        center[0], center[1]
+        x1, y1,
+        x2, y2,
+        scaledX3, scaledY3
     ];
+    
+    // Super detailed debugging output
+    console.log('Creating proper inner triangle:');
+    console.log(`Side ${side} vertices: (${x1.toFixed(2)}, ${y1.toFixed(2)}), (${x2.toFixed(2)}, ${y2.toFixed(2)})`);
+    console.log(`Original third vertex from makeEquilateral: (${x3.toFixed(2)}, ${y3.toFixed(2)})`);
+    console.log(`Midpoint of side: (${midpointX.toFixed(2)}, ${midpointY.toFixed(2)})`);
+    console.log(`Vector to third vertex: (${vectorX.toFixed(2)}, ${vectorY.toFixed(2)})`);
+    console.log(`Scaled amount: ${scaleAmount}, producing vertex: (${scaledX3.toFixed(2)}, ${scaledY3.toFixed(2)})`);
+    
+    // Verify equilateral with all side calculations
+    const sideLength = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+    const newSideB = Math.sqrt((scaledX3 - x2) ** 2 + (scaledY3 - y2) ** 2);
+    const newSideC = Math.sqrt((x1 - scaledX3) ** 2 + (y1 - scaledY3) ** 2);
+    
+    console.log(`Equilateral check - Sides: original=${sideLength.toFixed(2)}, B=${newSideB.toFixed(2)}, C=${newSideC.toFixed(2)}`);
+    
+    // Verify distance from midpoint to new vertex
+    const distToNewVertex = Math.sqrt((midpointX - scaledX3) ** 2 + (midpointY - scaledY3) ** 2);
+    const expectedHeight = (sideLength * Math.sqrt(3) / 2) * scaleAmount;
+    console.log(`Height check: actual=${distToNewVertex.toFixed(4)}, expected=${expectedHeight.toFixed(4)}`);
     
     // Add the new triangle
     const newTriangle = addTriangle(newVertices, triangle, side);
     
     if (newTriangle) {
+        // Set up the parent-child relationship
         triangle.setInnerTriangle(side, newTriangle);
         
         // Explicitly focus and select the new triangle
