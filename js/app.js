@@ -108,12 +108,15 @@ const vertexShaderSource = `
     
     varying vec3 vColor;
     varying float vSelected;
-    varying vec2 vUv;
+    varying vec2 vPosition; // Renamed to reflect actual content
     
     void main() {
         vColor = instanceColor;
         vSelected = instanceSelected;
-        vUv = position;
+        vPosition = position;
+        
+        // Just pass through the position for fragment shader to use
+        // WebGL 1.0 doesn't support gl_VertexID, so we need a simpler approach
         
         // No instancing transformations - using actual vertices
         // Project directly to clip space
@@ -126,60 +129,40 @@ const fragmentShaderSource = `
     
     uniform float time;
     uniform vec2 resolution;
-    uniform float showColors; // Add uniform for color toggle
+    uniform float showColors;
     
     varying vec3 vColor;
     varying float vSelected;
-    varying vec2 vUv;
+    varying vec2 vPosition;
     
     void main() {
-        // Base triangle color - softer, more pastel color
-        vec3 baseColor = vColor * 0.9 + vec3(0.1);
+        // Super simplified shader for transparency handling
+        vec3 color = vColor;  // Default to the provided color
+        float alpha = 1.0;    // Default to fully opaque
         
-        // Calculate distance from edges for thin border
-        vec2 dist2Edge = min(abs(vUv), abs(vec2(1.0) - vUv));
-        float edgeDist = min(dist2Edge.x, dist2Edge.y);
-        
-        // Create thin, subtle border (thinner than before)
-        float borderWidth = 0.01;
-        float borderFactor = smoothstep(0.0, borderWidth, edgeDist);
-        
-        // Default colors for transparent mode
-        vec3 edgeColor = vec3(0.2, 0.2, 0.2);  // Dark gray edges
-        float alpha = 0.1;                      // Very transparent fill
-        
-        // Apply colors based on the showColors toggle
-        vec3 color;
         if (showColors > 0.5) {
-            // Apple-inspired aesthetic - clean fill with subtle border when colors enabled
-            color = mix(vec3(0.85), baseColor, borderFactor);
-            alpha = 0.95;
-        } else {
-            // Transparent mode - just show edges
-            color = mix(edgeColor, vec3(0.98), borderFactor);
-            // Keep selection colors visible even in transparent mode
-            if (vSelected <= 0.5) {
-                alpha = mix(0.8, 0.05, borderFactor); // Edges visible, fill almost transparent
+            // COLORED MODE - Solid triangles with the provided color
+            alpha = 0.95;  // Slightly transparent
+            
+            // Selection causes a blue tint
+            if (vSelected > 0.5) {
+                vec3 highlightColor = vec3(0.3, 0.7, 1.0);
+                float pulse = 0.7 + 0.3 * sin(time * 2.0);
+                color = mix(color, highlightColor, 0.3 * pulse);
             }
-        }
-        
-        // For selected triangles, add a clean, elegant highlight
-        if (vSelected > 0.5) {
-            // Soft blue glow for selection (Apple-style)
-            vec3 highlightColor = vec3(0.3, 0.7, 1.0);
+        } else {
+            // WIREFRAME MODE - Triangles are completely transparent
+            // The outlines are drawn by separate function, not in the shader
             
-            // Subtle pulsing effect
-            float pulse = 0.7 + 0.3 * sin(time * 2.0);
+            // Make all triangles fully transparent in wireframe mode
+            // (This allows our outline drawing technique to work)
+            alpha = 0.0;
             
-            // Add a slightly thicker, glowing border for selected triangles
-            float selectedBorder = smoothstep(0.0, 0.03, edgeDist);
-            color = mix(highlightColor * pulse, color, selectedBorder);
-            
-            // Add a subtle overall tint
-            color = color * 0.8 + highlightColor * 0.2;
-            
-            // Keep selected triangles more visible even in transparent mode
-            alpha = 0.8;
+            // Only selected triangles get a slight fill
+            if (vSelected > 0.5) {
+                alpha = 0.1;  // Barely visible fill
+                color = vec3(0.3, 0.7, 1.0);  // Blue highlight
+            }
         }
         
         gl_FragColor = vec4(color, alpha);
@@ -324,8 +307,10 @@ function initWebGL() {
     
     // Set up viewport and clear color
     resize();
-    gl.clearColor(0.95, 0.95, 0.95, 1.0);
+    gl.clearColor(0.98, 0.98, 0.98, 1.0); // Slightly lighter background
     gl.enable(gl.BLEND);
+    
+    // Simple alpha blending
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     
     // Add instructions to the UI
@@ -881,6 +866,8 @@ let vertexBuffer;
 let colorBuffer;
 // Buffer for all triangle selections
 let selectedBuffer;
+// Special buffer for wireframe rendering
+let wireframeBuffer;
 
 // Move to a direct rendering approach instead of instancing
 function initBuffers() {
@@ -888,6 +875,7 @@ function initBuffers() {
     vertexBuffer = gl.createBuffer();
     colorBuffer = gl.createBuffer();
     selectedBuffer = gl.createBuffer();
+    wireframeBuffer = gl.createBuffer(); // Initialize wireframe buffer
     
     // We'll update these in updateTriangleBuffers()
     gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
@@ -897,6 +885,9 @@ function initBuffers() {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(0), gl.DYNAMIC_DRAW);
     
     gl.bindBuffer(gl.ARRAY_BUFFER, selectedBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(0), gl.DYNAMIC_DRAW);
+    
+    gl.bindBuffer(gl.ARRAY_BUFFER, wireframeBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(0), gl.DYNAMIC_DRAW);
 }
 
@@ -909,6 +900,8 @@ function updateTriangleBuffers() {
     if (!dataChanged) return;
     
     console.log('Updating triangle buffers, triangle count:', triangleCount);
+    
+    // No need to update wireframe buffers - we're using the main vertex buffer
     
     if (triangleCount <= 0) return;
     
@@ -953,6 +946,156 @@ function updateTriangleBuffers() {
     dataChanged = false;
 }
 
+// Create very visible outlines for triangles (wireframe mode)
+function createTriangleOutlines() {
+    if (triangleCount <= 0) return;
+    
+    // This approach draws each triangle twice:
+    // 1. First slightly larger and in black (or blue for selected)
+    // 2. Then slightly smaller in white (transparent in this case)
+    // The result is visible outlines without depending on WebGL LINE drawing
+    
+    console.log('Creating triangle outlines for wireframe mode');
+    
+    // Save current settings
+    const currentProgram = program;
+    
+    // Bind the correct shader
+    gl.useProgram(program);
+    
+    // For each triangle, draw its outline using the expanded triangle trick
+    for (let i = 0; i < triangleCount; i++) {
+        const t = triangles[i];
+        
+        // Scale factor for the expanded triangle (make it larger for thicker outlines)
+        const scaleFactor = 1.10; // 10% larger for very visible outlines
+        
+        // Original triangle center
+        const cx = (t.vertices[0] + t.vertices[2] + t.vertices[4]) / 3;
+        const cy = (t.vertices[1] + t.vertices[3] + t.vertices[5]) / 3;
+        
+        // Create expanded vertices (scaled from center)
+        const expandedVertices = new Float32Array(6);
+        for (let j = 0; j < 6; j += 2) {
+            // Scale vertex from center
+            expandedVertices[j] = cx + (t.vertices[j] - cx) * scaleFactor;
+            expandedVertices[j+1] = cy + (t.vertices[j+1] - cy) * scaleFactor;
+        }
+        
+        // 1. First draw the expanded triangle in black (or blue if selected)
+        // Create a buffer for the expanded triangle
+        const expandedBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, expandedBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, expandedVertices, gl.STATIC_DRAW);
+        gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+        
+        // Set color based on selection state
+        gl.disableVertexAttribArray(instanceColorLocation);
+        
+        if (t.selected || t.focused) {
+            // Blue for selected triangles
+            const pulse = 0.7 + 0.3 * Math.sin(performance.now() * 0.002);
+            gl.vertexAttrib3f(instanceColorLocation, 0.3 * pulse, 0.7 * pulse, 1.0 * pulse);
+        } else {
+            // Black for regular triangles
+            gl.vertexAttrib3f(instanceColorLocation, 0.0, 0.0, 0.0);
+        }
+        
+        // Draw the expanded triangle as solid
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        
+        // 2. Now draw the original triangle in the background color to create the outline effect
+        // Bind original triangle vertices
+        const originalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, originalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(t.vertices), gl.STATIC_DRAW);
+        gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+        
+        // Set background color (transparent in this case)
+        gl.vertexAttrib3f(instanceColorLocation, 1.0, 1.0, 1.0); // White
+        
+        // Make sure the shader knows this isn't selected
+        gl.disableVertexAttribArray(selectedUniformLocation);
+        gl.vertexAttrib1f(selectedUniformLocation, 0.0);
+        
+        // Draw the original triangle
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        
+        // Clean up buffers
+        gl.deleteBuffer(expandedBuffer);
+        gl.deleteBuffer(originalBuffer);
+    }
+    
+    // Reset state
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+    gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(instanceColorLocation);
+    gl.enableVertexAttribArray(selectedUniformLocation);
+}
+
+// Completely simplified wireframe rendering approach
+function drawWireframesEnhanced() {
+    if (triangleCount <= 0) return;
+    
+    // Special shader would be better but let's use a simple approach:
+    // We'll draw each triangle's edges one by one
+    
+    // Draw thick black lines for each triangle
+    for (let i = 0; i < triangleCount; i++) {
+        const t = triangles[i];
+        
+        // Create index buffer for line segments
+        const indexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+        
+        // Define three line segments (0-1, 1-2, 2-0)
+        const indices = new Uint16Array([
+            0, 1,  // First line
+            1, 2,  // Second line
+            2, 0   // Third line (closing)
+        ]);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+        
+        // Create vertex buffer for this triangle
+        const vertBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertBuffer);
+        
+        // Use the actual triangle vertices
+        const vertices = new Float32Array([
+            t.vertices[0], t.vertices[1],  // v0
+            t.vertices[2], t.vertices[3],  // v1
+            t.vertices[4], t.vertices[5]   // v2
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        
+        // Set up attribute
+        gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+        
+        // Set color based on selection
+        gl.disableVertexAttribArray(instanceColorLocation);
+        if (t.selected || t.focused) {
+            // Blue pulsing for selected/focused
+            const pulse = 0.7 + 0.3 * Math.sin(performance.now() * 0.002);
+            gl.vertexAttrib3f(instanceColorLocation, 0.3 * pulse, 0.7 * pulse, 1.0 * pulse);
+        } else {
+            // Black for regular triangles
+            gl.vertexAttrib3f(instanceColorLocation, 0.0, 0.0, 0.0);
+        }
+        
+        // Draw the three line segments using indices
+        gl.drawElements(gl.LINES, 6, gl.UNSIGNED_SHORT, 0);
+        
+        // Clean up buffers
+        gl.deleteBuffer(indexBuffer);
+        gl.deleteBuffer(vertBuffer);
+    }
+    
+    // Restore state
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+    gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(instanceColorLocation);
+}
+
 // Keep this function for backward compatibility, but delegate to our new function
 function updateInstanceData() {
     updateTriangleBuffers();
@@ -992,6 +1135,12 @@ function render(time) {
     
     // Set clear color - clean white background
     gl.clearColor(0.98, 0.98, 0.98, 1.0);
+    
+    // Simple blending setup - same for both modes
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    
+    // Depth testing disabled to ensure proper transparent rendering
+    gl.disable(gl.DEPTH_TEST);
     
     // Clear the canvas
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -1037,8 +1186,7 @@ function render(time) {
     gl.uniformMatrix4fv(projectionMatrixLocation, false, projectionMatrix);
     gl.uniformMatrix4fv(modelViewMatrixLocation, false, modelViewMatrix);
     
-    // Enable anti-aliasing where possible
-    gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    // We're not using anti-aliasing features as they can cause artifacts
     
     // Draw triangles directly (no instancing)
     try {
@@ -1049,6 +1197,13 @@ function render(time) {
         
         // Draw each triangle directly - 3 vertices per triangle
         gl.drawArrays(gl.TRIANGLES, 0, triangleCount * 3);
+        
+        // In wireframe mode, also draw explicit lines
+        if (!showColors) {
+            // Completely different approach - draw triangles with stencil buffer
+            // for visible outlines
+            createTriangleOutlines();
+        }
     } catch (e) {
         console.error('Error in drawArrays:', e);
     }
