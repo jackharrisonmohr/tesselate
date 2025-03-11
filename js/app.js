@@ -486,7 +486,37 @@ function createAdjacentTriangle(triangleIndex, side) {
     if (newTriangle) {
         // Set up neighbor relationships
         triangle.setNeighbor(side, newTriangle);
-        newTriangle.setNeighbor((side + 2) % 3, triangle);
+        
+        // Find which side of the new triangle faces the original triangle
+        // This is more reliable than assuming (side + 2) % 3
+        for (let newSide = 0; newSide < 3; newSide++) {
+            // Get the two vertices of this side of the new triangle
+            const newSideVerts = newTriangle.getSide(newSide);
+            const newV1 = [newSideVerts[0], newSideVerts[1]];
+            const newV2 = [newSideVerts[2], newSideVerts[3]];
+            
+            // Check if these match the original shared edge (in either order)
+            const originalSideVerts = triangle.getSide(side);
+            const origV1 = [originalSideVerts[0], originalSideVerts[1]];
+            const origV2 = [originalSideVerts[2], originalSideVerts[3]];
+            
+            // Check if the vertices match (considering both orderings)
+            const matchForward = (
+                Math.abs(newV1[0] - origV1[0]) < 0.001 && Math.abs(newV1[1] - origV1[1]) < 0.001 &&
+                Math.abs(newV2[0] - origV2[0]) < 0.001 && Math.abs(newV2[1] - origV2[1]) < 0.001
+            );
+            
+            const matchReverse = (
+                Math.abs(newV1[0] - origV2[0]) < 0.001 && Math.abs(newV1[1] - origV2[1]) < 0.001 &&
+                Math.abs(newV2[0] - origV1[0]) < 0.001 && Math.abs(newV2[1] - origV1[1]) < 0.001
+            );
+            
+            if (matchForward || matchReverse) {
+                console.log(`Found matching side: New triangle side ${newSide} matches original triangle side ${side}`);
+                newTriangle.setNeighbor(newSide, triangle);
+                break;
+            }
+        }
         
         // Explicitly focus and select the new triangle after creation
         const newIndex = triangles.indexOf(newTriangle);
@@ -759,11 +789,26 @@ function setupInputHandlers() {
                 toggleSelectTriangle(index);
             } else {
                 // Just Arrow: Navigate to neighbor
+                // We're using the same geometric side selection as for creation
+                console.log(`%c Navigating from triangle ${triangle.id} using side ${side}`, 'color: blue; font-weight: bold');
+                
+                // Log all existing neighbors for debugging
+                console.log(`Triangle ${triangle.id} neighbors:`, 
+                    triangle.neighbors.map((n, i) => n ? `Side ${i}: Triangle ${n.id}` : `Side ${i}: None`).join(', '));
+                
                 if (triangle.neighbors[side]) {
                     const neighborIndex = triangles.indexOf(triangle.neighbors[side]);
-                    console.log('Navigating to neighbor on side', side, 'index', neighborIndex);
+                    const neighbor = triangle.neighbors[side];
+                    console.log(`%c Found neighbor (triangle ${neighbor.id}) on side ${side}, index ${neighborIndex}`, 'color: green; font-weight: bold');
+                    
+                    // Log centers for debugging spatial relationships
+                    console.log(`Current triangle center: (${triangle.center[0].toFixed(2)}, ${triangle.center[1].toFixed(2)})`);
+                    console.log(`Target triangle center: (${neighbor.center[0].toFixed(2)}, ${neighbor.center[1].toFixed(2)})`);
+                    
                     focusTriangle(neighborIndex);
                     selectTriangle(neighborIndex);
+                } else {
+                    console.log(`%c No neighbor found on side ${side}`, 'color: red');
                 }
             }
         }
